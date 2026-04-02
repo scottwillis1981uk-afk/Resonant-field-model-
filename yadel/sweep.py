@@ -1,9 +1,9 @@
 """
-yadel/sweep.py — Stage 2: Sweep and Envelope Mapper
+yadel/sweep.py — Stage 2: Sweep and Envelope Mapper  (v0.2 canonical)
 
 Sweeps the detuning parameter from det_min to det_max using n_points steps.
-All operating points share the same burst-noise realisation so that differences
-in the envelope are purely due to dynamics, not noise variation.
+All operating points share the same Gaussian noise realisation (sigma=0.002)
+so that differences in the envelope are purely due to dynamics.
 
 Returns a SweepResult dataclass with:
   - detuning values
@@ -81,8 +81,7 @@ def run_sweep(
 
     if noise is None:
         rng   = np.random.default_rng(params.get("seed", 42))
-        noise = make_noise(params["n_samples"], params["noise_amplitude"],
-                           params["noise_burst_prob"], rng)
+        noise = make_noise(params["n_samples"], params["sigma"], rng)
 
     det_values = np.linspace(det_min, det_max, n_points)
     scores     = np.zeros(n_points)

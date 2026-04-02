@@ -6,7 +6,7 @@ from yadel.sweep import run_sweep
 from yadel.pockets import detect_pockets, plot_pockets
 
 def test_stage3():
-    result = run_sweep(det_min=0.0, det_max=3.0, n_points=60, topology="A")
+    result = run_sweep(det_min=-0.25, det_max=0.50, n_points=60, topology="A")
     report = detect_pockets(result)
 
     print(f"  Pockets found: {len(report.pockets)}")

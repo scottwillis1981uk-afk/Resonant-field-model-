@@ -59,10 +59,9 @@ def compare_topologies(
     if params is None:
         params = dict(DEFAULTS)
 
-    # Single shared noise realisation
+    # Single shared noise realisation (sigma=0.002 Gaussian)
     rng   = np.random.default_rng(params.get("seed", 42))
-    noise = make_noise(params["n_samples"], params["noise_amplitude"],
-                       params["noise_burst_prob"], rng)
+    noise = make_noise(params["n_samples"], params["sigma"], rng)
 
     sweep_A = run_sweep(det_min, det_max, n_points, topology="A",
                         params=params, noise=noise)

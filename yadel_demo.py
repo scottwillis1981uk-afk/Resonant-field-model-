@@ -27,8 +27,8 @@ def main():
     print("=" * 60)
 
     report = run_full(
-        det_min  = 0.0,
-        det_max  = 3.2,
+        det_min  = -0.25,
+        det_max  =  0.50,
         n_points = 80,
     )
 

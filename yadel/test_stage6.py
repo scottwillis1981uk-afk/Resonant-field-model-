@@ -7,7 +7,7 @@ from yadel.reporter import run_full
 def test_stage6():
     with tempfile.TemporaryDirectory() as tmpdir:
         out = Path(tmpdir)
-        report = run_full(det_min=0.0, det_max=3.0, n_points=60, out_dir=out)
+        report = run_full(det_min=-0.25, det_max=0.50, n_points=60, out_dir=out)
 
         print(f"  Run ID: {report['run_id']}")
         print(f"  Topology A: {report['topology_A']['stable']} stable / "

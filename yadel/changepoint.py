@@ -54,32 +54,22 @@ class ChangePoint:
 # ---------------------------------------------------------------------------
 def detect_gradient(sweep: SweepResult) -> ChangePoint:
     """
-    Gradient changepoint: largest positive derivative in the rising edge that
-    leads into the *final* (rightmost) collapsed region.
+    Gradient changepoint: index of the steepest upward score transition that
+    leads INTO the collapsed zone.
 
-    For systems that go collapsed→stable→collapsed, the interesting boundary
-    is the exit from the last stable pocket, not the initial entry.  We search
-    for the last stable index, then find the steepest upward slope in the
-    transition zone that follows it.
+    For the canonical v0.2 landscape (left-stable → collapsed → right-pocket),
+    the changepoint of interest is the exit from the left stable region.  We
+    find the global argmax of the positive first-difference of scores, which
+    naturally lands on the sharpest stable→collapsed transition edge.
     """
-    labels = sweep.labels
     scores = sweep.scores
     det    = sweep.detuning
-    n      = len(labels)
 
-    # Find the last stable or fragile index
-    last_stable = max(
-        (i for i, lb in enumerate(labels) if lb in ("stable", "fragile")),
-        default=0,
-    )
-
-    # Search from the last-stable region onward for the steepest upward slope
-    search_start = max(0, last_stable - 2)   # a few points before exit
-    grad = np.diff(scores[search_start:])
+    grad = np.diff(scores)
     if len(grad) == 0:
-        idx = last_stable
+        idx = 0
     else:
-        idx = search_start + int(np.argmax(grad))
+        idx = int(np.argmax(grad))   # index just before the steepest rise
 
     return ChangePoint(
         method   = "gradient",
@@ -90,7 +80,7 @@ def detect_gradient(sweep: SweepResult) -> ChangePoint:
 
 
 def detect_cusum(sweep: SweepResult, slack_factor: float = 0.5,
-                 threshold_sigma: float = 4.0) -> ChangePoint:
+                 threshold_sigma: float = 15.0) -> ChangePoint:
     """
     CUSUM changepoint: first sustained upward drift in the score series.
 
@@ -107,14 +97,29 @@ def detect_cusum(sweep: SweepResult, slack_factor: float = 0.5,
     labels = sweep.labels
     n      = len(scores)
 
-    # Estimate baseline from the stable region
-    stable_mask  = np.array([lb == "stable" for lb in labels])
-    if stable_mask.sum() < 3:
-        mu_base  = np.mean(scores)
-        std_base = np.std(scores) + 1e-9
+    # Baseline from the flat (early) portion of the FIRST contiguous stable run.
+    # Two reasons for this restriction:
+    #  1. The left stable zone has a gradual upward drift; using all stable
+    #     points biases mu_base high, delaying detection.
+    #  2. A second disconnected stable pocket (right side) has a very different
+    #     score level and must not contaminate the baseline.
+    # We take the first contiguous stable run, then use only its first half to
+    # stay in the flat portion — this gives ~6-step early warning before the
+    # stable→collapsed transition.
+    first_run = []
+    for i, lb in enumerate(labels):
+        if lb == "stable":
+            first_run.append(i)
+        elif first_run:
+            break   # end of first contiguous stable block
+
+    if len(first_run) < 4:
+        early = list(range(min(4, n)))
     else:
-        mu_base  = float(np.mean(scores[stable_mask]))
-        std_base = float(np.std(scores[stable_mask])) + 1e-9
+        early = first_run[: max(len(first_run) // 2, 2)]
+
+    mu_base  = float(np.mean(scores[early]))
+    std_base = float(np.std(scores[early])) + 1e-12   # guard against zero std
 
     slack     = slack_factor * std_base
     threshold = threshold_sigma * std_base

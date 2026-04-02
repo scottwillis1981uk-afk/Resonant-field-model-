@@ -1,96 +1,128 @@
 """
-yadel/core.py — Stage 1: Core Engine
+yadel/core.py — Stage 1: Core Engine  (v0.2 canonical)
 
-Simulates a delayed nonlinear oscillator using an Ikeda-type recurrence:
+Canonical model equation:
+    u(t) = (g0 + detune) * (x(t-1) + k_a*x(t-da) - k_b*x(t-db)) + sigma*noise(t)
+    x(t) = tanh(u(t))
 
-    Topology A:  x[n] = A * sin(omega * x[n-tau] + detuning) + noise[n]
-    Topology B:  x[n] = A * sin(omega * x[n-tau] + 0.5*x[n-2*tau] + detuning) + noise[n]
+Canonical parameters:
+    k_a   = 0.55
+    k_b   = 0.48
+    g0    = 0.80
+    sigma = 0.002
 
-Key behaviour:
-  • detuning ≈ 0           → unstable / collapsed (origin is not a stable operating point)
-  • detuning ≈ 0.2–1.0     → stable pocket (away from the origin)
-  • detuning > ~1.3        → transition into fragile / collapsed regime
-  Topology B has a shifted stability envelope due to the extra delay term.
+    Topology A:  da=5,  db=11
+    Topology B:  da=7,  db=13
 
-This non-monotone stability landscape means classical bisection from the
-origin would miss the stable pocket entirely — that is YADEL's core insight.
+Stability landscape (detuning sweep from −0.25 → +0.50):
+  det < −0.07   → stable at x*=0          (origin-adjacent stable zone)
+  −0.07 to 0.31 → limit-cycle / collapsed  (includes det=0 — the origin)
+  det > +0.31   → stable at x*≈0.65       (disconnected pocket, away from origin)
+
+Topology B transitions at det≈+0.27 (different envelope to A).
+
+The non-monotone structure means classical bisection starting from det=0 sees
+only collapse and never discovers the stable pocket — that is YADEL's insight.
 """
 
 import numpy as np
 
 
 # ---------------------------------------------------------------------------
-# Default simulation parameters
+# Canonical parameters (v0.2)
 # ---------------------------------------------------------------------------
-DEFAULTS = {
-    "A":                 1.50,   # loop gain / nonlinearity amplitude
-    "omega":             1.00,   # angular frequency inside nonlinearity
-    "tau":               3,      # primary delay (integer samples)
-    "n_samples":         2000,   # total simulation length
-    "warmup":            300,    # transient samples discarded before analysis
-    "noise_amplitude":   0.08,   # burst noise amplitude
-    "noise_burst_prob":  0.10,   # probability of burst per sample
-    "collapse_threshold": 0.25,  # running-variance → collapsed
-    "fragile_threshold":  0.02,  # running-variance → fragile (below = stable)
-    "window":            80,     # sliding window length for variance estimate
-    "seed":              42,
+K_A   = 0.55
+K_B   = 0.48
+G0    = 0.80
+SIGMA = 0.002
+
+# Topology delay indices
+DELAYS = {
+    "A": {"da": 5,  "db": 11},
+    "B": {"da": 7,  "db": 13},
 }
 
 
-def make_noise(n_samples: int, amplitude: float, burst_prob: float,
+# ---------------------------------------------------------------------------
+# Default simulation / classification parameters
+# ---------------------------------------------------------------------------
+DEFAULTS = {
+    # Canonical model
+    "k_a":   K_A,
+    "k_b":   K_B,
+    "g0":    G0,
+    "sigma": SIGMA,
+    # Simulation length
+    "n_samples": 3000,
+    "warmup":    400,    # transient samples before variance measurement
+    # Classification thresholds (tuned to canonical variance ranges)
+    "collapse_threshold": 0.05,    # mean running-var ≥ this → collapsed
+    "fragile_threshold":  0.0008,  # mean running-var ≥ this → fragile (below = stable)
+    "window":             100,     # sliding-window length for variance estimate
+    "seed": 42,
+}
+
+
+# ---------------------------------------------------------------------------
+# Noise generator
+# ---------------------------------------------------------------------------
+def make_noise(n_samples: int, sigma: float,
                rng: np.random.Generator) -> np.ndarray:
-    """Burst noise: amplitude * N(0,1) with probability burst_prob per sample."""
-    mask = rng.random(n_samples) < burst_prob
-    return amplitude * rng.standard_normal(n_samples) * mask
+    """
+    Continuous Gaussian noise with amplitude sigma.
+    (Canonical spec: sigma*noise(t), noise ~ N(0,1))
+    """
+    return sigma * rng.standard_normal(n_samples)
 
 
+# ---------------------------------------------------------------------------
+# Simulator
+# ---------------------------------------------------------------------------
 def simulate(detuning: float, noise: np.ndarray, params: dict,
              topology: str = "A") -> np.ndarray:
     """
-    Run one instance of the delayed nonlinear oscillator.
+    Run one instance of the canonical delayed oscillator.
 
     Parameters
     ----------
-    detuning  : float
-        Phase offset that is swept to traverse the stability landscape.
-    noise     : 1-D array, length n_samples
-        Pre-generated burst noise (same array shared across both topologies).
-    params    : dict
+    detuning : float
+        Swept parameter.  Collapsed at det≈0; stable pocket at det>0.31 (Topo A).
+    noise    : 1-D array, length n_samples
+        Pre-generated noise (sigma already applied; shared across topologies).
+    params   : dict
         Simulation parameters (see DEFAULTS).
-    topology  : "A" or "B"
-        A — single delay:  x[n] = A*sin(omega*x[n-tau] + detuning) + noise[n]
-        B — dual delay:    x[n] = A*sin(omega*x[n-tau] + 0.5*x[n-2*tau] + detuning) + noise[n]
-            Topology B shifts the stability envelope by mixing two delayed states.
+    topology : "A" or "B"
+        Selects the delay indices da, db.
 
     Returns
     -------
     x : 1-D array, length n_samples
     """
-    A     = params["A"]
-    omega = params["omega"]
-    tau   = params["tau"]
-    n     = params["n_samples"]
-    rng_i = np.random.default_rng(params.get("seed", 42))
+    k_a = params["k_a"]
+    k_b = params["k_b"]
+    g0  = params["g0"]
+    n   = params["n_samples"]
+    da  = DELAYS[topology]["da"]
+    db  = DELAYS[topology]["db"]
 
-    x      = np.zeros(n)
-    buf_sz = 2 * tau
-    x[:buf_sz] = 0.05 * rng_i.standard_normal(buf_sz)
+    buf = db + 2   # buffer must cover the longest delay
+    rng_init = np.random.default_rng(params.get("seed", 42))
 
-    start = buf_sz
+    x = np.zeros(n)
+    x[:buf] = 0.01 * rng_init.standard_normal(buf)   # small non-zero IC
 
-    for i in range(start, n):
-        if topology == "A":
-            arg = omega * x[i - tau] + detuning
-        else:
-            # Topology B mixes two delay taps — shifts the resonance pocket
-            arg = omega * x[i - tau] + 0.5 * x[i - 2 * tau] + detuning
-        x[i] = A * np.sin(arg) + noise[i]
+    for t in range(buf, n):
+        u    = (g0 + detuning) * (x[t-1] + k_a*x[t-da] - k_b*x[t-db]) + noise[t]
+        x[t] = np.tanh(u)
 
     return x
 
 
+# ---------------------------------------------------------------------------
+# Running variance and classification
+# ---------------------------------------------------------------------------
 def running_variance(x: np.ndarray, window: int) -> np.ndarray:
-    """Sliding-window variance (causal, no lookahead)."""
+    """Causal sliding-window variance."""
     n   = len(x)
     out = np.zeros(n)
     for i in range(window, n):
@@ -98,19 +130,24 @@ def running_variance(x: np.ndarray, window: int) -> np.ndarray:
     return out
 
 
+def mean_running_variance(x: np.ndarray, params: dict) -> float:
+    """Scalar stability score: mean running variance over post-warmup window."""
+    rv = running_variance(x, params["window"])
+    return float(np.mean(rv[params["warmup"]:]))
+
+
 def classify(x: np.ndarray, params: dict) -> str:
     """
     Classify a trajectory as 'stable', 'fragile', or 'collapsed'.
 
-    Uses the mean running variance over the post-warmup portion of x.
+    Thresholds are calibrated to the canonical v0.2 parameter set:
+      stable    : mean_rv < 0.0008   (x converged to fixed point)
+      fragile   : 0.0008 ≤ mean_rv < 0.05
+      collapsed : mean_rv ≥ 0.05    (sustained limit cycle)
     """
-    warmup   = params["warmup"]
-    window   = params["window"]
+    mean_rv  = mean_running_variance(x, params)
     col_thr  = params["collapse_threshold"]
     frag_thr = params["fragile_threshold"]
-
-    rv      = running_variance(x, window)
-    mean_rv = float(np.mean(rv[warmup:]))
 
     if mean_rv >= col_thr:
         return "collapsed"
@@ -118,9 +155,3 @@ def classify(x: np.ndarray, params: dict) -> str:
         return "fragile"
     else:
         return "stable"
-
-
-def mean_running_variance(x: np.ndarray, params: dict) -> float:
-    """Return the scalar stability score (mean post-warmup running variance)."""
-    rv = running_variance(x, params["window"])
-    return float(np.mean(rv[params["warmup"]:]))

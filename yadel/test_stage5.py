@@ -5,7 +5,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 from yadel.comparator import compare_topologies, plot_comparison
 
 def test_stage5():
-    comp = compare_topologies(det_min=0.0, det_max=3.0, n_points=60)
+    comp = compare_topologies(det_min=-0.25, det_max=0.50, n_points=60)
 
     print(f"  Divergence AUC: {comp.divergence_auc:.4f}")
     print(f"  Topology A labels: { {lb: comp.sweep_A.labels.count(lb) for lb in ['stable','fragile','collapsed']} }")

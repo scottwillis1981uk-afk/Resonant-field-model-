@@ -5,7 +5,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 from yadel.sweep import run_sweep, plot_envelope
 
 def test_stage2():
-    result = run_sweep(det_min=0.0, det_max=3.0, n_points=40, topology="A")
+    result = run_sweep(det_min=-0.25, det_max=0.50, n_points=40, topology="A")
 
     assert len(result.labels) == 40
     assert "stable"    in result.labels, "No stable points found in sweep"
